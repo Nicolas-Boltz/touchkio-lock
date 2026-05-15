@@ -111,10 +111,10 @@ const init = async () => {
     `Display Status [${HARDWARE.support.displayStatus ? HARDWARE.display.status.path : unsupported}]:`,
     displayStatusInfo,
   );
-  const displayBrightness = `${getDisplayBrightness()} (${HARDWARE.display.brightness.command || "sysfs"})`;
+  const displayBrightness = `${getDisplayBrightness()} (${HARDWARE.display.brightness.command})`;
   const displayBrightnessInfo = HARDWARE.support.displayBrightness ? displayBrightness : unsupported;
   console.info(
-    `Display Brightness [${HARDWARE.support.displayBrightness ? HARDWARE.display.brightness.path || "ddc://vcp/feature/0x10" : unsupported}]:`,
+    `Display Brightness [${HARDWARE.support.displayBrightness ? HARDWARE.display.brightness.path : unsupported}]:`,
     displayBrightnessInfo,
   );
   const audioVolume = `${getAudioVolume()} (pactl)`;
@@ -212,16 +212,6 @@ const update = async () => {
   if (HARDWARE.support.displayBrightness) {
     let displayBrightnessChanged = false;
 
-    // Use cache brightness path if available
-    if (HARDWARE.display.brightness.command) {
-      const brightness = await readFile(path.join(APP.cache, "Brightness.vcp"), false);
-      const brightnessChanged = !!brightness && brightness !== HARDWARE.display.brightness.value.brightness;
-
-      // Update internal brightness values
-      HARDWARE.display.brightness.value.brightness = brightness;
-      displayBrightnessChanged |= brightnessChanged;
-    }
-
     // Use sysfs brightness path if available
     if (HARDWARE.display.brightness.path) {
       const brightness = await readFile(path.join(HARDWARE.display.brightness.path, "brightness"), false);
@@ -315,11 +305,11 @@ const checkSupport = () => {
     batteryLevel: batteryPath,
     illuminanceLevel: illuminancePath,
     displayStatus: statusPath && statusCommand,
-    displayBrightness: sudo && statusPath && statusCommand && (brightnessPath || brightnessCommand),
+    displayBrightness: statusPath && statusCommand && brightnessPath && brightnessCommand,
     keyboardVisibility: keyboard,
     audioVolume: audioDevice,
+    appUpdate: sudo && service && release,
     sudoRights: sudo,
-    appUpdate: service && sudo && release,
   };
 };
 
@@ -594,7 +584,7 @@ const getDisplayStatusPath = () => {
 };
 
 /**
- * Gets the available display status command checking for `wlopm`, `kscreen-doctor` and `xset`.
+ * Gets the available display status command checking for `ddcutil`, `wlopm`, `kscreen-doctor` and `xset`.
  *
  * @returns {string|null} The display status command or null if nothing was found.
  */
@@ -603,14 +593,50 @@ const getDisplayStatusCommand = () => {
   const desktop = HARDWARE.session.desktop;
   const mapping = {
     wayland: [
+      { command: "ddcutil", desktops: ["*"] },
       { command: "wlopm", desktops: ["labwc", "wayfire", "unknown"] },
       { command: "kscreen-doctor", desktops: ["kde", "plasma", "unknown"] },
     ],
-    x11: [{ command: "xset", desktops: ["*"] }],
+    x11: [
+      { command: "ddcutil", desktops: ["*"] },
+      { command: "xset", desktops: ["*"] },
+    ],
   }[type];
   for (const map of mapping || []) {
     if (commandExists(map.command) && map.desktops.some((d) => d === "*" || desktop.includes(d))) {
-      return map.command;
+      switch (map.command) {
+        case "ddcutil":
+          if (!sudoRights()) {
+            break;
+          }
+          const ddcutil = execSyncCommand("sudo", ["ddcutil", "capabilities"]);
+          if (ddcutil !== null && ddcutil.includes("Feature: D6")) {
+            HARDWARE.display.status.path = path.join(APP.cache, "Display");
+            fs.mkdirSync(HARDWARE.display.status.path, { recursive: true });
+            fs.writeFileSync(path.join(HARDWARE.display.status.path, "dpms"), "");
+            fs.writeFileSync(path.join(HARDWARE.display.status.path, "status"), "");
+            return map.command;
+          }
+          break;
+        case "wlopm":
+          const wlopm = execSyncCommand("wlopm", []);
+          if (wlopm !== null) {
+            return map.command;
+          }
+          break;
+        case "kscreen-doctor":
+          const kdoc = execSyncCommand("kscreen-doctor", ["--dpms", "show"]);
+          if (kdoc !== null) {
+            return map.command;
+          }
+          break;
+        case "xset":
+          const xset = execSyncCommand("xset", ["-q"]);
+          if (xset !== null) {
+            return map.command;
+          }
+          break;
+      }
     }
   }
   return null;
@@ -626,6 +652,14 @@ const getDisplayStatus = () => {
     return null;
   }
   switch (HARDWARE.display.status.command) {
+    case "ddcutil":
+      const ddcutil = execSyncCommand("sudo", ["ddcutil", "getvcp", "0xD6", "--brief"]);
+      const match = ddcutil !== null ? ddcutil.match(/VCP D6 \S+ x0?([14])/) : null;
+      if (match) {
+        const output = match[1] === "1";
+        return output ? "ON" : "OFF";
+      }
+      break;
     case "wlopm":
       const wlopm = execSyncCommand("wlopm", []);
       if (wlopm !== null) {
@@ -671,6 +705,13 @@ const setDisplayStatus = (status, callback = null) => {
     return;
   }
   switch (HARDWARE.display.status.command) {
+    case "ddcutil":
+      execAsyncCommand("sudo", ["ddcutil", "setvcp", "0xD6", status === "ON" ? "1" : "4"], (reply, error) => {
+        fs.writeFileSync(path.join(HARDWARE.display.status.path, "dpms"), status.toLowerCase());
+        fs.writeFileSync(path.join(HARDWARE.display.status.path, "status"), status.toLowerCase());
+        if (typeof callback === "function") callback(reply, error);
+      });
+      break;
     case "wlopm":
       execAsyncCommand("wlopm", [`--${status.toLowerCase()}`, "*"], callback);
       break;
@@ -704,7 +745,7 @@ const getDisplayBrightnessPath = () => {
 };
 
 /**
- * Gets the available display brightness command checking for `ddcutil`.
+ * Gets the available display brightness command checking for `ddcutil` and `tee`.
  *
  * @returns {string|null} The display brightness command or null if nothing was found.
  */
@@ -712,22 +753,38 @@ const getDisplayBrightnessCommand = () => {
   const type = HARDWARE.session.type;
   const desktop = HARDWARE.session.desktop;
   const mapping = {
-    wayland: [{ command: "ddcutil", desktops: ["*"] }],
-    x11: [{ command: "ddcutil", desktops: ["*"] }],
+    wayland: [
+      { command: "ddcutil", desktops: ["*"] },
+      { command: "tee", desktops: ["*"] },
+    ],
+    x11: [
+      { command: "ddcutil", desktops: ["*"] },
+      { command: "tee", desktops: ["*"] },
+    ],
   }[type];
   for (const map of mapping || []) {
-    if (sudoRights() && commandExists(map.command) && map.desktops.some((d) => d === "*" || desktop.includes(d))) {
-      HARDWARE.display.brightness.path = null;
+    if (commandExists(map.command) && map.desktops.some((d) => d === "*" || desktop.includes(d))) {
       switch (map.command) {
         case "ddcutil":
-          const output = execSyncCommand("sudo", ["ddcutil", "capabilities"]);
-          if (output && output.includes("Feature: 10")) {
-            fs.writeFileSync(path.join(APP.cache, "Brightness.vcp"), "");
+          if (!sudoRights()) {
+            break;
+          }
+          const ddcutil = execSyncCommand("sudo", ["ddcutil", "capabilities"]);
+          if (ddcutil !== null && ddcutil.includes("Feature: 10")) {
+            HARDWARE.display.brightness.path = path.join(APP.cache, "Display");
+            fs.mkdirSync(HARDWARE.display.brightness.path, { recursive: true });
+            fs.writeFileSync(path.join(HARDWARE.display.brightness.path, "brightness"), "");
             return map.command;
           }
           break;
-        default:
-          return map.command;
+        case "tee":
+          if (!sudoRights()) {
+            break;
+          }
+          if (HARDWARE.display.brightness.path) {
+            return map.command;
+          }
+          break;
       }
     }
   }
@@ -735,31 +792,31 @@ const getDisplayBrightnessCommand = () => {
 };
 
 /**
- * Gets the maximum display brightness value using `/sys/class/backlight/.../max_brightness` or `ddcutil getvcp 10`.
+ * Gets the maximum display brightness value using the available command.
  *
  * @returns {number|null} The brightness maximum value or null if an error occurs.
  */
 const getDisplayBrightnessMax = () => {
   switch (HARDWARE.display.brightness.command) {
     case "ddcutil":
-      const output = execSyncCommand("sudo", ["ddcutil", "getvcp", "10", "--brief"]);
-      const match = output ? output.match(/VCP 10 C (\d+) (\d+)/) : null;
+      const ddcutil = execSyncCommand("sudo", ["ddcutil", "getvcp", "0x10", "--brief"]);
+      const match = ddcutil !== null ? ddcutil.match(/VCP 10 C (\d+) (\d+)/) : null;
       if (match) {
         return parseInt(match[2], 10);
       }
       return null;
-  }
-  if (HARDWARE.display.brightness.path) {
-    const max = readFile(path.join(HARDWARE.display.brightness.path, "max_brightness"));
-    if (max) {
-      return parseInt(max, 10);
-    }
+    case "tee":
+      const max = readFile(path.join(HARDWARE.display.brightness.path, "max_brightness"));
+      if (max) {
+        return parseInt(max, 10);
+      }
+      return null;
   }
   return null;
 };
 
 /**
- * Gets the current display brightness level using `/sys/class/backlight/.../brightness` or `ddcutil getvcp 10`.
+ * Gets the current display brightness level using the available command.
  *
  * @returns {number|null} The brightness level as a percentage or null if an error occurs.
  */
@@ -769,25 +826,24 @@ const getDisplayBrightness = () => {
   }
   switch (HARDWARE.display.brightness.command) {
     case "ddcutil":
-      const output = execSyncCommand("sudo", ["ddcutil", "getvcp", "10", "--brief"]);
-      const match = output ? output.match(/VCP 10 C (\d+) (\d+)/) : null;
+      const ddcutil = execSyncCommand("sudo", ["ddcutil", "getvcp", "0x10", "--brief"]);
+      const match = ddcutil !== null ? ddcutil.match(/VCP 10 C (\d+) (\d+)/) : null;
       if (match) {
         return parseInt(match[1], 10);
       }
       return null;
-  }
-  if (HARDWARE.display.brightness.path) {
-    const brightness = readFile(path.join(HARDWARE.display.brightness.path, "brightness"));
-    if (brightness) {
-      const max = HARDWARE.display.brightness.value.max || 1;
-      return Math.max(1, Math.min(Math.round((parseInt(brightness, 10) / max) * 100), 100));
-    }
+    case "tee":
+      const brightness = readFile(path.join(HARDWARE.display.brightness.path, "brightness"));
+      if (brightness) {
+        const max = HARDWARE.display.brightness.value.max || 1;
+        return Math.max(1, Math.min(Math.round((parseInt(brightness, 10) / max) * 100), 100));
+      }
   }
   return null;
 };
 
 /**
- * Sets the display brightness level using `/sys/class/backlight/.../brightness` or `ddcutil setvcp 10`.
+ * Sets the display brightness level using the available command.
  *
  * This function takes a brightness value between 1 to 100 percent,
  * maps it to the proper range and writes it to the system.
@@ -807,20 +863,19 @@ const setDisplayBrightness = (brightness, callback = null) => {
   }
   switch (HARDWARE.display.brightness.command) {
     case "ddcutil":
-      execAsyncCommand("sudo", ["ddcutil", "setvcp", "10", `${brightness}`], (reply, error) => {
-        if (!error) {
-          fs.writeFileSync(path.join(APP.cache, "Brightness.vcp"), `${brightness}`);
-        }
+      execAsyncCommand("sudo", ["ddcutil", "setvcp", "0x10", `${brightness}`], (reply, error) => {
+        fs.writeFileSync(path.join(HARDWARE.display.brightness.path, "brightness"), `${brightness}`);
         if (typeof callback === "function") callback(reply, error);
       });
       return;
-  }
-  if (HARDWARE.display.brightness.path) {
-    const max = HARDWARE.display.brightness.value.max || 1;
-    const value = Math.max(1, Math.min(Math.round((brightness / 100) * max), max));
-    const proc = execAsyncCommand("sudo", ["tee", path.join(HARDWARE.display.brightness.path, "brightness")], callback);
-    proc.stdin.write(value.toString());
-    proc.stdin.end();
+    case "tee":
+      const max = HARDWARE.display.brightness.value.max || 1;
+      const file = path.join(HARDWARE.display.brightness.path, "brightness");
+      const value = Math.max(1, Math.min(Math.round((brightness / 100) * max), max));
+      const proc = execAsyncCommand("sudo", ["tee", file], callback);
+      proc.stdin.write(value.toString());
+      proc.stdin.end();
+      return;
   }
 };
 
