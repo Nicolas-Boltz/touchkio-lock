@@ -73,6 +73,7 @@ const init = async () => {
       initTheme();
       initDisplay();
       initVolume();
+      initMicrophone();
       initKeyboard();
       initPageNumber();
       initPageZoom();
@@ -106,6 +107,7 @@ const init = async () => {
       EVENTS.on("updateApp", updateApp);
       EVENTS.on("updateStatus", updateKiosk);
       EVENTS.on("updateVolume", updateVolume);
+      EVENTS.on("updateMicrophone", updateMicrophone);
       EVENTS.on("updateKeyboard", updateKeyboard);
       EVENTS.on("updatePage", () => {
         updatePageNumber();
@@ -587,6 +589,51 @@ const updateVolume = async () => {
   }
   const volume = hardware.getAudioVolume();
   publishState("volume", volume);
+};
+
+/**
+ * Initializes the microphone volume and handles the execute logic.
+ */
+const initMicrophone = () => {
+  const root = `${INTEGRATION.root}/microphone`;
+  const config = {
+    name: "Microphone",
+    unique_id: `${INTEGRATION.node}_microphone`,
+    command_topic: `${root}/set`,
+    state_topic: `${root}/state`,
+    value_template: "{{ value | int }}",
+    mode: "slider",
+    min: 0,
+    max: 100,
+    unit_of_measurement: "%",
+    icon: "mdi:microphone",
+    device: INTEGRATION.device,
+  };
+  if (!HARDWARE.support.microphoneVolume || ARGS.app_disable.includes("mqtt_microphone")) {
+    removeConfig("number", config);
+    return;
+  }
+  publishConfig("number", config)
+    .on("message", (topic, message) => {
+      if (topic === config.command_topic) {
+        const volume = parseInt(message, 10);
+        console.verbose("Set Microphone Volume:", volume);
+        hardware.setMicrophoneVolume(volume);
+      }
+    })
+    .subscribe(config.command_topic);
+  updateMicrophone();
+};
+
+/**
+ * Updates the microphone volume via the mqtt connection.
+ */
+const updateMicrophone = async () => {
+  if (ARGS.app_disable.includes("mqtt_microphone")) {
+    return;
+  }
+  const volume = hardware.getMicrophoneVolume();
+  publishState("microphone", volume);
 };
 
 /**

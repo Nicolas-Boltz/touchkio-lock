@@ -34,7 +34,10 @@ global.HARDWARE = global.HARDWARE || {
     visible: null,
   },
   audio: {
-    device: null,
+    device: {
+      output: null,
+      input: null,
+    },
   },
 };
 
@@ -60,7 +63,8 @@ const init = async () => {
   HARDWARE.display.brightness.path = getDisplayBrightnessPath();
   HARDWARE.display.brightness.command = getDisplayBrightnessCommand();
   HARDWARE.display.brightness.value.max = getDisplayBrightnessMax();
-  HARDWARE.audio.device = getAudioDevice();
+  HARDWARE.audio.device.output = getAudioOutput();
+  HARDWARE.audio.device.input = getAudioInput();
   HARDWARE.support = checkSupport();
   HARDWARE.initialized = true;
 
@@ -120,8 +124,14 @@ const init = async () => {
   const audioVolume = `${getAudioVolume()} (pactl)`;
   const audioVolumeInfo = HARDWARE.support.audioVolume ? audioVolume : unsupported;
   console.info(
-    `Audio Volume [${HARDWARE.support.audioVolume ? HARDWARE.audio.device : unsupported}]:`,
+    `Audio Volume [${HARDWARE.support.audioVolume ? HARDWARE.audio.device.output : unsupported}]:`,
     audioVolumeInfo,
+  );
+  const microphoneVolume = `${getMicrophoneVolume()} (pactl)`;
+  const microphoneVolumeInfo = HARDWARE.support.microphoneVolume ? microphoneVolume : unsupported;
+  console.info(
+    `Microphone Volume [${HARDWARE.support.microphoneVolume ? HARDWARE.audio.device.input : unsupported}]:`,
+    microphoneVolumeInfo,
   );
   const keyboardVisibility = `${getKeyboardVisibility()} (squeekboard)`;
   const keyboardVisibilityInfo = HARDWARE.support.keyboardVisibility ? keyboardVisibility : unsupported;
@@ -131,15 +141,19 @@ const init = async () => {
   );
   process.stdout.write("\n");
 
-  // Monitor audio volume
-  if (HARDWARE.support.audioVolume) {
+  // Monitor audio output and input volume
+  if (HARDWARE.support.audioVolume || HARDWARE.support.microphoneVolume) {
     commandMonitor("pactl", ["subscribe"], (reply, error) => {
       if (!reply || error) {
         return;
       }
-      if (reply.includes("'change' on sink")) {
+      if (HARDWARE.support.audioVolume && reply.includes("'change' on sink")) {
         console.info("Update Audio Volume:", getAudioVolume());
         EVENTS.emit("updateVolume");
+      }
+      if (HARDWARE.support.microphoneVolume && reply.includes("'change' on source")) {
+        console.info("Update Microphone Volume:", getMicrophoneVolume());
+        EVENTS.emit("updateMicrophone");
       }
     });
   }
@@ -293,7 +307,8 @@ const checkSupport = () => {
   const keyboard = processRuns("squeekboard");
   const release = APP.build.maker === "deb";
 
-  const audioDevice = !!HARDWARE.audio.device;
+  const audioOutput = !!HARDWARE.audio.device.output;
+  const audioInput = !!HARDWARE.audio.device.input;
   const batteryPath = !!HARDWARE.battery.level.path;
   const illuminancePath = !!HARDWARE.illuminance.level.path;
   const statusPath = !!HARDWARE.display.status.path;
@@ -307,7 +322,8 @@ const checkSupport = () => {
     displayStatus: statusPath && statusCommand,
     displayBrightness: statusPath && statusCommand && brightnessPath && brightnessCommand,
     keyboardVisibility: keyboard,
-    audioVolume: audioDevice,
+    audioVolume: audioOutput,
+    microphoneVolume: audioInput,
     appUpdate: sudo && service && release,
     sudoRights: sudo,
   };
@@ -880,11 +896,11 @@ const setDisplayBrightness = (brightness, callback = null) => {
 };
 
 /**
- * Gets the default audio device using `pactl`.
+ * Gets the default audio output using `pactl`.
  *
- * @returns {string|null} The default audio device or null if an error occurs.
+ * @returns {string|null} The default audio output or null if an error occurs.
  */
-const getAudioDevice = () => {
+const getAudioOutput = () => {
   if (!commandExists("pactl")) {
     return null;
   }
@@ -892,13 +908,17 @@ const getAudioDevice = () => {
   if (!output) {
     return null;
   }
-  return !output.includes("auto_null") ? output.trim() : null;
+  const sink = output.trim();
+  if (!sink.includes("auto_null") && !sink.endsWith(".monitor")) {
+    return sink;
+  }
+  return null;
 };
 
 /**
- * Gets the default audio device volume using `pactl`.
+ * Gets the default audio output volume using `pactl`.
  *
- * @returns {number|null} The default audio device volume as a percentage or null if an error occurs.
+ * @returns {number|null} The default audio output volume as a percentage or null if an error occurs.
  */
 const getAudioVolume = () => {
   if (!HARDWARE.support.audioVolume) {
@@ -917,9 +937,9 @@ const getAudioVolume = () => {
 };
 
 /**
- * Sets the default audio device volume using `pactl`.
+ * Sets the default audio output volume using `pactl`.
  *
- * This function takes a volume value between 0 to 100 percent and sends it to the device.
+ * This function takes a volume value between 0 to 100 percent and sends it to the output device.
  *
  * @param {number} volume - The desired volume level (0-100).
  * @param {Function} callback - A callback function that receives the output or error.
@@ -936,6 +956,69 @@ const setAudioVolume = (volume, callback = null) => {
   }
   execAsyncCommand("pactl", ["set-sink-mute", "@DEFAULT_SINK@", volume === 0 ? "1" : "0"]);
   execAsyncCommand("pactl", ["set-sink-volume", "@DEFAULT_SINK@", `${volume}%`], callback);
+};
+
+/**
+ * Gets the default audio input using `pactl`.
+ *
+ * @returns {string|null} The default audio input or null if an error occurs.
+ */
+const getAudioInput = () => {
+  if (!commandExists("pactl")) {
+    return null;
+  }
+  const output = execSyncCommand("pactl", ["get-default-source"]);
+  if (!output) {
+    return null;
+  }
+  const source = output.trim();
+  if (!source.includes("auto_null") && !source.endsWith(".monitor")) {
+    return source;
+  }
+  return null;
+};
+
+/**
+ * Gets the default audio input volume using `pactl`.
+ *
+ * @returns {number|null} The default audio input volume as a percentage or null if an error occurs.
+ */
+const getMicrophoneVolume = () => {
+  if (!HARDWARE.support.microphoneVolume) {
+    return null;
+  }
+  const mute = execSyncCommand("pactl", ["get-source-mute", "@DEFAULT_SOURCE@"]);
+  const volume = execSyncCommand("pactl", ["get-source-volume", "@DEFAULT_SOURCE@"]);
+  if (!mute || !volume) {
+    return null;
+  }
+  const match = volume.match(/\/(\s*(\d+)%)/);
+  if (match) {
+    return Math.max(0, Math.min(100, mute.includes("yes") ? 0 : parseInt(match[2], 10)));
+  }
+  return null;
+};
+
+/**
+ * Sets the default audio input volume using `pactl`.
+ *
+ * This function takes a volume value between 0 to 100 percent and sends it to the input device.
+ *
+ * @param {number} volume - The desired volume level (0-100).
+ * @param {Function} callback - A callback function that receives the output or error.
+ */
+const setMicrophoneVolume = (volume, callback = null) => {
+  if (!HARDWARE.support.microphoneVolume) {
+    if (typeof callback === "function") callback(null, "Not supported");
+    return;
+  }
+  if (typeof volume !== "number" || volume < 0 || volume > 100) {
+    console.error("Volume must be a number between 0 and 100");
+    if (typeof callback === "function") callback(null, "Invalid volume");
+    return;
+  }
+  execAsyncCommand("pactl", ["set-source-mute", "@DEFAULT_SOURCE@", volume === 0 ? "1" : "0"]);
+  execAsyncCommand("pactl", ["set-source-volume", "@DEFAULT_SOURCE@", `${volume}%`], callback);
 };
 
 /**
@@ -1341,6 +1424,8 @@ module.exports = {
   setDisplayBrightness,
   getAudioVolume,
   setAudioVolume,
+  getMicrophoneVolume,
+  setMicrophoneVolume,
   getKeyboardVisibility,
   setKeyboardVisibility,
   checkPackageUpgrades,
