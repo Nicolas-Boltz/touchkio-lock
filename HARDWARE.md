@@ -61,11 +61,13 @@ The necessary requirements for MQTT sensors to work are listed here:
 | Name                 | Requirements                                                                                                  | References                                                                                                   |
 | -------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | App (Update)         | Requires `sudo` rights, `.deb` install and `touchkio.service` running .                                       | [#70](https://github.com/leukipp/touchkio/issues/70), [#77](https://github.com/leukipp/touchkio/issues/77)   |
-| Display (Status)     | Working `wlopm`, `kscreen-doctor` or `xset` command.                                                          | [#38](https://github.com/leukipp/touchkio/issues/38), [#57](https://github.com/leukipp/touchkio/issues/57)   |
+| Display (Status)     | Working `wlopm`, `kscreen-doctor`, `xset`or `ddcutil` command.                                                | [#57](https://github.com/leukipp/touchkio/issues/57), [#194](https://github.com/leukipp/touchkio/pull/194)   |
 | Display (Brightness) | Requires `sudo` rights, device under `/sys/class/backlight/*/brightness` exists or working `ddcutil` command. | [#30](https://github.com/leukipp/touchkio/issues/30), [#101](https://github.com/leukipp/touchkio/issues/101) |
 | Keyboard             | Raspberry Pi OS (Wayland) with `squeekboard` running.                                                         | [#7](https://github.com/leukipp/touchkio/issues/7), [#85](https://github.com/leukipp/touchkio/issues/85)     |
 | Battery              | Device under `/sys/class/power_supply/*/capacity` exists.                                                     | [#33](https://github.com/leukipp/touchkio/issues/33)                                                         |
-| Volume               | Device (non-dummy) `pactl get-default-sink` exists.                                                           | [#82](https://github.com/leukipp/touchkio/issues/82)                                                         |
+| Illuminance          | Device under `/sys/bus/iio/devices/*/in_illuminance_raw` exists.                                              | [#191](https://github.com/leukipp/touchkio/pull/191)                                                         |
+| Volume               | Device `pactl get-default-sink` exists.                                                                       | [#82](https://github.com/leukipp/touchkio/issues/82)                                                         |
+| Microphone           | Device `pactl get-default-source` exists.                                                                     | [#195](https://github.com/leukipp/touchkio/issues/195)                                                       |
 | Reboot               | Requires password-less `sudo` rights.                                                                         | [#39](https://github.com/leukipp/touchkio/issues/39)                                                         |
 | Shutdown             | Requires password-less `sudo` rights.                                                                         | [#39](https://github.com/leukipp/touchkio/issues/39)                                                         |
 
@@ -76,7 +78,7 @@ The necessary requirements for MQTT sensors to work are listed here:
 <details><summary>I have installed Ubuntu GNOME.</summary>
 
   - On some Debian based systems (e.g. Ubuntu GNOME), the display status control is only available when using X11 (`xset`).
-  - GNOME is the least supported window manager.
+  - GNOME running on wayland is the least supported window manager.
     - It's recommended to switch to KDE wayland, if you want better support for display status control (`kscreen-doctor`).
 
 </details>
@@ -108,17 +110,21 @@ The necessary requirements for MQTT sensors to work are listed here:
     - `wlopm --[on,off] \*` (Raspberry Pi OS, Wayland)
     - `kscreen-doctor --dpms [on,off]` (Debian KDE, Wayland)
     - `xset dpms force [on,off]` (Generic, X11)
+  - If none of the above commands are available on your OS consider installing another one. There is a build-in command prioritization in case [ddcutil](https://github.com/leukipp/touchkio/pull/194) is installed, but it's really slow and unreliable.
+    - `sudo ddcutil setvcp D6 0x04` turns off your screen without asking for a password.
+    - `sudo ddcutil setvcp D6 0x01` turns on your screen without asking for a password.
 
 </details>
 
 <details><summary>Display brightness can't be controlled through MQTT.</summary>
 
   - Have a look at the [features](https://github.com/leukipp/touchkio/blob/main/HARDWARE.md#features) section to check if all requirements are fulfilled.
-    - The **Display** MQTT control is a light entity with brightness support. So make sure to to [click on the entity](https://github.com/leukipp/touchkio/issues/75) to check for brightness support.
+    - The **Display** MQTT control is a light entity with brightness support. So make sure to [click on the entity](https://github.com/leukipp/touchkio/issues/75) to check for brightness support.
+    - The brightness control is also only available if the display status control (on/off) is functional.
   - HDMI screens typically do not offer brightness control out of the box, so additional setup steps are required.
-    - Brightness support for [ddcutil](https://github.com/leukipp/touchkio/issues/101#issuecomment-3521247263) is build-in and checked on application startup.
-    - Alternatively installing [ddcci-driver-linux](https://github.com/leukipp/touchkio/issues/132#issue-3659009749) or [ddcci-dkms](https://github.com/leukipp/touchkio/issues/101#issuecomment-3571523927) may also work.
-  - Make sure that one of these works for your display when you run it directly on the terminal, otherwise the MQTT switch will not work either.
+    - It's recommended to install [ddcci-driver-linux](https://github.com/leukipp/touchkio/issues/132#issue-3659009749) or [ddcci-dkms](https://github.com/leukipp/touchkio/issues/101#issuecomment-3571523927), since this will create the necessary `/sys/class/backlight/*` folder structure.
+    - Additional brightness support using [ddcutil](https://github.com/leukipp/touchkio/issues/101#issuecomment-3521247263) is build-in and checked on application startup, but it's really slow and unreliable.
+  - Make sure that one of these works for your display when you run it directly on the terminal, otherwise the MQTT switch will not show the brightness control.
     - `sudo cat /sys/class/backlight/*/brightness` returns some numeric value.
     - `sudo ddcutil setvcp 10 42` changes the brightness to 42% without asking for a password.
 
@@ -126,8 +132,9 @@ The necessary requirements for MQTT sensors to work are listed here:
 
 <details><summary>Turning HDMI screen off via MQTT causes it to turn back on.</summary>
 
-  - There are certain HDMI screens (e.g. Viewsonic) where the MQTT display status command doesn't work as expected. 
-    - The screen [immediately turns on again](https://github.com/leukipp/touchkio/issues/38), which may be caused by incompatible HDMI cables being used.
+  - There are certain HDMI screens where the MQTT display status command doesn't work as expected. 
+    - The screen **immediately turns on again**, which may be caused by [incompatible HDMI](https://github.com/leukipp/touchkio/issues/38#issuecomment-3341641642) cables being used.
+    - Forcing [hotplug](https://github.com/leukipp/touchkio/issues/38#issuecomment-3347732956) may also help, but consider checking your HDMI cable connection and [display settings](https://github.com/leukipp/touchkio/issues/131#issuecomment-4026027425) first.
 
 </details>
 
@@ -223,13 +230,6 @@ The necessary requirements for MQTT sensors to work are listed here:
 </details>
 
 ### Errors
-
-<details><summary>Terminal is full with "ERROR:gbm_wrapper.cc" messages.</summary>
-
-  - On the terminal you may see some _ERROR:gbm_wrapper.cc_ messages.
-    - This appears to be a [known issue](https://github.com/electron/electron/issues/42322) that currently lacks a fix, but the webview still works.
-
-</details>
 
 <details><summary>CPU and RAM usage increases without reason.</summary>
 
