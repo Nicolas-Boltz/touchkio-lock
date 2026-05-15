@@ -13,30 +13,8 @@ global.APP = global.APP || {};
 global.ARGS = global.ARGS || {};
 global.EVENTS = global.EVENTS || new Events();
 
-// Check display environment variable
-if (!process.env.DISPLAY) {
-  console.error(`\n$DISPLAY variable not set to run the GUI application, are you connected via SSH?\n`);
-  console.error(`If you have installed the service use:`);
-  console.error(`  systemctl --user start touchkio.service`);
-  console.error(`Alternatively export the variables first:`);
-  console.error(`  export DISPLAY=":0" && export WAYLAND_DISPLAY="wayland-0" && touchkio\n`);
-  process.exit(1);
-}
-
-// Move electron log file
-const elog = path.join(app.getPath("logs"), "electron.log");
-try {
-  if (fs.existsSync(elog)) {
-    fs.renameSync(elog, elog.replace(".log", ".old.log"));
-  }
-  console.debug = () => {};
-} catch (error) {
-  console.error("Failed to move electron log file:", error.message);
-}
-app.commandLine.appendSwitch("log-file", elog);
-
 /**
- * This promise resolves when the app has finished initializing,
+ * This method resolves when the app has finished initializing,
  * allowing to safely create browser windows and perform other
  * initialization tasks.
  */
@@ -276,7 +254,7 @@ const initLog = async () => {
 
   // Overwrite console log
   Object.assign(console, log.functions);
-  console.silly("Welcome To The Jungle!");
+  console.silly("WELCOME TO THE JUNGLE");
 
   return true;
 };
@@ -408,36 +386,40 @@ const promptArgs = async (proc) => {
 /**
  * Writes argument values to the filesystem.
  *
- * @param {string} path - Path of the .json file.
+ * @param {string} file - Path of the .json file.
  * @param {Object} args - The arguments object.
  */
-const writeArgs = (path, args) => {
+const writeArgs = (file, args) => {
   try {
-    const argc = Object.assign({}, args);
-    if ("mqtt_password" in argc) {
-      argc.mqtt_password = encrypt(argc.mqtt_password);
+    if (fs.existsSync(path.dirname(file))) {
+      const argc = Object.assign({}, args);
+      if ("mqtt_password" in argc) {
+        argc.mqtt_password = encrypt(argc.mqtt_password);
+      }
+      fs.writeFileSync(file, JSON.stringify(argc, null, 2));
     }
-    fs.writeFileSync(path, JSON.stringify(argc, null, 2));
   } catch (error) {
-    console.error(`Failed to write ${path}:`, error.message);
+    console.error(`Failed to write ${file}:`, error.message);
   }
 };
 
 /**
  * Reads argument values from the filesystem.
  *
- * @param {string} path - Path of the .json file.
+ * @param {string} file - Path of the .json file.
  * @returns {Object} The arguments object.
  */
-const readArgs = (path) => {
+const readArgs = (file) => {
   try {
-    const args = JSON.parse(fs.readFileSync(path, "utf8"));
-    if ("mqtt_password" in args) {
-      args.mqtt_password = decrypt(args.mqtt_password);
+    if (fs.existsSync(file)) {
+      const args = JSON.parse(fs.readFileSync(file, "utf8"));
+      if ("mqtt_password" in args) {
+        args.mqtt_password = decrypt(args.mqtt_password);
+      }
+      return args;
     }
-    return args;
   } catch (error) {
-    console.error(`Failed to parse ${path}:`, error.message);
+    console.error(`Failed to parse ${file}:`, error.message);
   }
   return {};
 };
@@ -450,7 +432,7 @@ const readArgs = (path) => {
  */
 const encrypt = (value) => {
   const iv = crypto.randomBytes(16);
-  const key = crypto.scryptSync(hardware.getMachineId(), APP.name, 32);
+  const key = crypto.scryptSync(hardware.getMachineId(), app.getName(), 32);
   const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
   let encrypted = cipher.update(value, "utf8", "hex");
   encrypted += cipher.final("hex");
@@ -466,7 +448,7 @@ const encrypt = (value) => {
 const decrypt = (value) => {
   const p = Buffer.from(value, "base64").toString("utf8").split(":");
   const iv = Buffer.from(p.shift(), "hex");
-  const key = crypto.scryptSync(hardware.getMachineId(), APP.name, 32);
+  const key = crypto.scryptSync(hardware.getMachineId(), app.getName(), 32);
   const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
   const buffer = Buffer.from(p.join(":"), "hex");
   let decrypted = decipher.update(buffer, "binary", "utf8");
@@ -483,3 +465,36 @@ const decrypt = (value) => {
 const sleep = (ms) => {
   return new Promise((r) => setTimeout(r, ms));
 };
+
+/**
+ * This method runs immediately when the process starts,
+ * allowing to check necessary environment variables and
+ * append internal command line switches.
+ */
+(() => {
+  console.debug = () => {};
+
+  // Check display environment variable
+  if (!process.env.DISPLAY) {
+    console.error(`\n$DISPLAY variable not set to run the GUI application, are you connected via SSH?\n`);
+    console.error(`If you have installed the service use:`);
+    console.error(`  systemctl --user start touchkio.service`);
+    console.error(`Alternatively export the variables first:`);
+    console.error(`  export DISPLAY=":0" && export WAYLAND_DISPLAY="wayland-0" && touchkio\n`);
+    process.exit(1);
+  }
+
+  // Append electron log file switch
+  try {
+    const elog = path.join(app.getPath("logs"), "electron.log");
+    fs.existsSync(elog) && fs.renameSync(elog, elog.replace(".log", ".old.log"));
+    app.commandLine.appendSwitch("log-file", elog);
+  } catch {}
+
+  // Append unsafe secure origin switch
+  try {
+    const args = readArgs(path.join(app.getPath("userData"), "Arguments.json"));
+    const origins = (args.web_url || []).map((url) => new URL(url).origin).filter(Boolean);
+    app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", origins.join(","));
+  } catch {}
+})();
