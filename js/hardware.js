@@ -464,10 +464,12 @@ const getProcessorUsage = () => {
  * @returns {number|null} The CPU temperature in degrees celsius or null if nothing was found.
  */
 const getProcessorTemperature = () => {
+  const temperatures = {};
   const thermal = "/sys/class/thermal";
   if (!fs.existsSync(thermal)) {
     return null;
   }
+  const types = ["cpu-thermal", "x86_pkg_temp", "k10temp", "TCPU", "cpu", "acpitz"];
   for (const zone of fs.readdirSync(thermal)) {
     const typeFile = path.join(thermal, zone, "type");
     const tempFile = path.join(thermal, zone, "temp");
@@ -475,11 +477,18 @@ const getProcessorTemperature = () => {
       continue;
     }
     const type = readFile(typeFile);
-    if (["cpu-thermal", "x86_pkg_temp", "k10temp", "acpitz", "cpu"].includes(type)) {
-      const temp = readFile(tempFile);
-      if (temp) {
-        return parseFloat(temp) / 1000;
-      }
+    if (!types.includes(type)) {
+      continue;
+    }
+    const temp = readFile(tempFile);
+    if (temp) {
+      temperatures[type] = parseFloat(temp) / 1000;
+    }
+  }
+  for (const type of types) {
+    const temp = temperatures[type];
+    if (Number.isFinite(temp) && temp >= 0 && temp <= 150) {
+      return temp;
     }
   }
   return null;
