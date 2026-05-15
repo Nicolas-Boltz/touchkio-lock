@@ -1095,7 +1095,8 @@ const viewEvents = async () => {
       ready.push(i);
     });
     view.webContents.on("dom-ready", () => {
-      view.webContents.insertCSS("::-webkit-scrollbar { display: none; }");
+      view.webContents.insertCSS("html, body { scrollbar-width: none !important; }");
+      view.webContents.insertCSS("::-webkit-scrollbar { display: none !important; }");
     });
 
     // Webview fully loaded
