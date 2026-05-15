@@ -89,7 +89,7 @@ const init = async () => {
       initProcessorUsage();
       initProcessorTemperature();
       initBatteryLevel();
-      initIlluminance();
+      initIlluminanceLevel();
       initPackageUpgrades();
       initLastActive();
 
@@ -180,7 +180,7 @@ const update = async () => {
   updateProcessorUsage();
   updateProcessorTemperature();
   updateBatteryLevel();
-  updateIlluminance();
+  updateIlluminanceLevel();
 };
 
 /**
@@ -1114,13 +1114,13 @@ const updateBatteryLevel = async () => {
 };
 
 /**
- * Initializes the illuminance sensor.
+ * Initializes the illuminance level sensor.
  */
-const initIlluminance = () => {
-  const root = `${INTEGRATION.root}/illuminance`;
+const initIlluminanceLevel = () => {
+  const root = `${INTEGRATION.root}/illuminance_level`;
   const config = {
-    name: "Illuminance",
-    unique_id: `${INTEGRATION.node}_illuminance`,
+    name: "Illuminance Level",
+    unique_id: `${INTEGRATION.node}_illuminance_level`,
     state_topic: `${root}/state`,
     value_template: "{{ (value | float) | round(0) }}",
     unit_of_measurement: "lx",
@@ -1128,20 +1128,23 @@ const initIlluminance = () => {
     icon: "mdi:brightness-5",
     device: INTEGRATION.device,
   };
-  if (!HARDWARE.support.illuminance) {
+  if (!HARDWARE.support.illuminanceLevel || ARGS.app_disable.includes("mqtt_illuminance_level")) {
     removeConfig("sensor", config);
     return;
   }
   publishConfig("sensor", config);
-  updateIlluminance();
+  updateIlluminanceLevel();
 };
 
 /**
- * Updates the illuminance sensor via the mqtt connection.
+ * Updates the illuminance level sensor via the mqtt connection.
  */
-const updateIlluminance = async () => {
-  const illuminance = hardware.getIlluminance();
-  publishState("illuminance", illuminance);
+const updateIlluminanceLevel = async () => {
+  if (ARGS.app_disable.includes("mqtt_illuminance_level")) {
+    return;
+  }
+  const illuminanceLevel = hardware.getIlluminanceLevel();
+  publishState("illuminance_level", illuminanceLevel);
 };
 
 /**

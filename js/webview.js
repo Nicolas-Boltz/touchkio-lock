@@ -1380,7 +1380,7 @@ const cookieStore = async (key, value, view = WEBVIEW.views[WEBVIEW.viewActive])
  * @returns {Promise<string|null>} The base64 image of the captured page or null if failed.
  */
 const captureView = async (wait, view = WEBVIEW.views[WEBVIEW.viewActive]) => {
-  if (ARGS.app_disable.includes("mqtt_screenshot")) {
+  if (!WEBVIEW.viewActive || ARGS.app_disable.includes("mqtt_screenshot")) {
     return null;
   }
   try {

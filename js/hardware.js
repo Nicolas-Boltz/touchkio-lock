@@ -14,7 +14,9 @@ global.HARDWARE = global.HARDWARE || {
     },
   },
   illuminance: {
-    path: null,
+    level: {
+      path: null,
+    },
   },
   display: {
     status: {
@@ -52,7 +54,7 @@ const init = async () => {
   HARDWARE.session.type = sessionType();
   HARDWARE.session.desktop = sessionDesktop();
   HARDWARE.battery.level.path = getBatteryLevelPath();
-  HARDWARE.illuminance.path = getIlluminancePath();
+  HARDWARE.illuminance.level.path = getIlluminanceLevelPath();
   HARDWARE.display.status.path = getDisplayStatusPath();
   HARDWARE.display.status.command = getDisplayStatusCommand();
   HARDWARE.display.brightness.path = getDisplayBrightnessPath();
@@ -97,11 +99,11 @@ const init = async () => {
     `Battery Level [${HARDWARE.support.batteryLevel ? HARDWARE.battery.level.path : unsupported}]:`,
     batteryLevelInfo,
   );
-  const illuminance = `${getIlluminance()} (sysfs)`;
-  const illuminanceInfo = HARDWARE.support.illuminance ? illuminance : unsupported;
+  const illuminanceLevel = `${getIlluminanceLevel()} (sysfs)`;
+  const illuminanceLevelInfo = HARDWARE.support.illuminanceLevel ? illuminanceLevel : unsupported;
   console.info(
-    `Illuminance [${HARDWARE.support.illuminance ? HARDWARE.illuminance.path : unsupported}]:`,
-    illuminanceInfo,
+    `Illuminance Level [${HARDWARE.support.illuminanceLevel ? HARDWARE.illuminance.level.path : unsupported}]:`,
+    illuminanceLevelInfo,
   );
   const displayStatus = `${getDisplayStatus()} (${HARDWARE.display.status.command})`;
   const displayStatusInfo = HARDWARE.support.displayStatus ? displayStatus : unsupported;
@@ -247,7 +249,7 @@ const compatibleSystem = () => {
   if (os.platform() !== "linux") {
     return false;
   }
-  const paths = ["/sys/class/drm", "/sys/class/backlight", "/sys/class/power_supply", "/sys/class/thermal"];
+  const paths = ["/sys/class/drm", "/sys/class/backlight"];
   return paths.every((path) => fs.existsSync(path));
 };
 
@@ -303,7 +305,7 @@ const checkSupport = () => {
 
   const audioDevice = !!HARDWARE.audio.device;
   const batteryPath = !!HARDWARE.battery.level.path;
-  const illuminancePath = !!HARDWARE.illuminance.path;
+  const illuminancePath = !!HARDWARE.illuminance.level.path;
   const statusPath = !!HARDWARE.display.status.path;
   const statusCommand = !!HARDWARE.display.status.command;
   const brightnessPath = !!HARDWARE.display.brightness.path && !!HARDWARE.display.brightness.value.max;
@@ -311,7 +313,7 @@ const checkSupport = () => {
 
   return {
     batteryLevel: batteryPath,
-    illuminance: illuminancePath,
+    illuminanceLevel: illuminancePath,
     displayStatus: statusPath && statusCommand,
     displayBrightness: sudo && statusPath && statusCommand && (brightnessPath || brightnessCommand),
     keyboardVisibility: keyboard,
@@ -463,6 +465,9 @@ const getProcessorUsage = () => {
  */
 const getProcessorTemperature = () => {
   const thermal = "/sys/class/thermal";
+  if (!fs.existsSync(thermal)) {
+    return null;
+  }
   for (const zone of fs.readdirSync(thermal)) {
     const typeFile = path.join(thermal, zone, "type");
     const tempFile = path.join(thermal, zone, "temp");
@@ -487,6 +492,9 @@ const getProcessorTemperature = () => {
  */
 const getBatteryLevelPath = () => {
   const power = "/sys/class/power_supply";
+  if (!fs.existsSync(power)) {
+    return null;
+  }
   for (const supply of fs.readdirSync(power)) {
     const capacityFile = path.join(power, supply, "capacity");
     if (!fs.existsSync(capacityFile)) {
@@ -514,19 +522,19 @@ const getBatteryLevel = () => {
 };
 
 /**
- * Gets the ambient light sensor path using `/sys/bus/iio/devices`.
+ * Gets the ambient light sensor level path using `/sys/bus/iio/devices`.
  *
- * @returns {string|null} The illuminance sensor path or null if nothing was found.
+ * @returns {string|null} The illuminance sensor level path or null if nothing was found.
  */
-const getIlluminancePath = () => {
+const getIlluminanceLevelPath = () => {
   const iio = "/sys/bus/iio/devices";
   if (!fs.existsSync(iio)) {
     return null;
   }
   for (const device of fs.readdirSync(iio)) {
     const nameFile = path.join(iio, device, "name");
-    const rawFile = path.join(iio, device, "in_illuminance_raw");
-    if (!fs.existsSync(nameFile) || !fs.existsSync(rawFile)) {
+    const illuminanceFile = path.join(iio, device, "in_illuminance_raw");
+    if (!fs.existsSync(nameFile) || !fs.existsSync(illuminanceFile)) {
       continue;
     }
     const name = readFile(nameFile);
@@ -540,15 +548,15 @@ const getIlluminancePath = () => {
 /**
  * Gets the current ambient light level in lux using `/sys/bus/iio/devices/.../in_illuminance_raw`.
  *
- * @returns {number|null} The illuminance in lux or null if nothing was found.
+ * @returns {number|null} The illuminance level in lux or null if nothing was found.
  */
-const getIlluminance = () => {
-  if (!HARDWARE.support.illuminance) {
+const getIlluminanceLevel = () => {
+  if (!HARDWARE.support.illuminanceLevel) {
     return null;
   }
-  const raw = readFile(`${HARDWARE.illuminance.path}/in_illuminance_raw`);
-  if (raw) {
-    return parseFloat(raw);
+  const illuminance = readFile(`${HARDWARE.illuminance.level.path}/in_illuminance_raw`);
+  if (illuminance) {
+    return parseFloat(illuminance);
   }
   return null;
 };
@@ -560,13 +568,16 @@ const getIlluminance = () => {
  */
 const getDisplayStatusPath = () => {
   const drm = "/sys/class/drm";
+  if (!fs.existsSync(drm)) {
+    return null;
+  }
   for (const card of fs.readdirSync(drm)) {
     const statusFile = path.join(drm, card, "status");
     if (!fs.existsSync(statusFile)) {
       continue;
     }
-    const content = readFile(statusFile);
-    if (content === "connected") {
+    const status = readFile(statusFile);
+    if (status === "connected") {
       return path.join(drm, card);
     }
   }
@@ -670,6 +681,9 @@ const setDisplayStatus = (status, callback = null) => {
  */
 const getDisplayBrightnessPath = () => {
   const backlight = "/sys/class/backlight";
+  if (!fs.existsSync(backlight)) {
+    return null;
+  }
   for (const address of fs.readdirSync(backlight)) {
     const brightnessFile = path.join(backlight, address, "brightness");
     if (!fs.existsSync(brightnessFile)) {
@@ -1256,7 +1270,7 @@ module.exports = {
   getProcessorUsage,
   getProcessorTemperature,
   getBatteryLevel,
-  getIlluminance,
+  getIlluminanceLevel,
   getDisplayStatus,
   setDisplayStatus,
   getDisplayBrightness,
