@@ -80,6 +80,7 @@ const init = async () => {
       initPageUrl();
       initLock();
       initLockPin();
+      initLockUnlock();
 
       // Init client sensors
       initModel();
@@ -906,6 +907,37 @@ const initLockPin = () => {
         } else {
           console.warn("Set Lock Pin: Invalid pin format");
         }
+      }
+    })
+    .subscribe(config.command_topic);
+};
+
+/**
+ * Initializes the lock force-unlock button and handles the execute logic.
+ *
+ * The regular `Lock` entity's state can be `JAMMED` after too many
+ * wrong pin attempts, which Home Assistant's default lock card does
+ * not let you tap through. A button has no state at all, so it stays
+ * pressable regardless of the current lock status.
+ */
+const initLockUnlock = () => {
+  const root = `${INTEGRATION.root}/lock/force_unlock`;
+  const config = {
+    name: "Force Unlock",
+    unique_id: `${INTEGRATION.node}_lock_force_unlock`,
+    command_topic: `${root}/set`,
+    icon: "mdi:lock-open-alert",
+    device: INTEGRATION.device,
+  };
+  if (!ARGS.lock_pin || ARGS.app_disable.includes("mqtt_lock")) {
+    removeConfig("button", config);
+    return;
+  }
+  publishConfig("button", config)
+    .on("message", (topic) => {
+      if (topic === config.command_topic) {
+        console.verbose("Force Unlock");
+        WEBVIEW.lock.set("UNLOCKED");
       }
     })
     .subscribe(config.command_topic);
