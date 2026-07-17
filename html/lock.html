@@ -13,6 +13,8 @@
         --error-color: rgba(255, 69, 58, 1);
         --dot-color: rgba(225, 225, 225, 0.25);
         --dot-active-color: rgba(3, 169, 244, 1);
+        --icon-background: rgba(255, 255, 255, 0.1);
+        --icon-color: rgba(180, 180, 180, 0.6);
       }
       [data-theme="light"] {
         --primary-color: rgba(33, 33, 33, 1);
@@ -24,6 +26,8 @@
         --error-color: rgba(255, 59, 48, 1);
         --dot-color: rgba(33, 33, 33, 0.2);
         --dot-active-color: rgba(3, 169, 244, 1);
+        --icon-background: rgba(0, 0, 0, 0.06);
+        --icon-color: rgba(120, 120, 120, 0.6);
       }
       [data-theme="hidden"] {
         --primary-color: rgba(0, 0, 0, 0);
@@ -35,6 +39,8 @@
         --error-color: rgba(0, 0, 0, 0);
         --dot-color: rgba(0, 0, 0, 0);
         --dot-active-color: rgba(0, 0, 0, 0);
+        --icon-background: rgba(0, 0, 0, 0);
+        --icon-color: rgba(0, 0, 0, 0);
       }
       ::-webkit-scrollbar {
         display: none;
@@ -59,7 +65,7 @@
         justify-content: center;
       }
       .pad {
-        display: flex;
+        display: none;
         flex-direction: column;
         align-items: center;
         row-gap: 16px;
@@ -67,6 +73,24 @@
         border-radius: 20px;
         border: 1px solid var(--border-color);
         background: var(--background-color);
+      }
+      .pad.open {
+        display: flex;
+      }
+      #lock-icon {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        background: var(--icon-background);
+        color: var(--icon-color);
+      }
+      #lock-icon svg {
+        width: 22px;
+        height: 22px;
+        pointer-events: none;
       }
       .dots {
         display: flex;
@@ -152,6 +176,18 @@
     </style>
   </head>
   <body>
+    <button id="lock-icon" title="Unlock">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+        <path
+          d="M8,11 V7 A5,5 0 0,1 17.5,4.2"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          fill="none"
+        />
+        <rect x="4" y="11" width="14" height="10" rx="2.5" fill="currentColor" />
+      </svg>
+    </button>
     <div class="pad" id="pad">
       <div class="dots" id="dots"></div>
       <div class="message" id="message">&nbsp;</div>
@@ -196,6 +232,22 @@
       let pin = "";
       let locked = false;
       let countdownInterval = null;
+      let padOpen = false;
+      let blockedUntilValue = null;
+
+      const openPad = () => {
+        padOpen = true;
+        document.getElementById("pad").classList.add("open");
+        if (blockedUntilValue && blockedUntilValue > Date.now()) {
+          startCountdown(blockedUntilValue);
+        }
+      };
+
+      const closePad = () => {
+        padOpen = false;
+        document.getElementById("pad").classList.remove("open");
+        clearInterval(countdownInterval);
+      };
 
       const renderDots = () => {
         const dots = document.getElementById("dots");
@@ -221,11 +273,12 @@
       const resetPad = () => {
         pin = "";
         locked = false;
-        clearInterval(countdownInterval);
+        blockedUntilValue = null;
         document.getElementById("pad").classList.remove("error");
         setKeysDisabled(false);
         setMessage("");
         renderDots();
+        closePad();
       };
 
       const submitPin = () => {
@@ -246,6 +299,7 @@
             clearInterval(countdownInterval);
             locked = false;
             pin = "";
+            blockedUntilValue = null;
             renderDots();
             document.getElementById("pad").classList.remove("error");
             setKeysDisabled(false);
@@ -285,6 +339,20 @@
           renderDots();
         });
         document.getElementById("confirm").addEventListener("click", submitPin);
+
+        document.getElementById("lock-icon").addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (padOpen) {
+            closePad();
+          } else {
+            openPad();
+          }
+        });
+        document.addEventListener("click", (e) => {
+          if (padOpen && !e.target.closest(".pad")) {
+            closePad();
+          }
+        });
       };
 
       const registerReceiveEvents = () => {
@@ -304,6 +372,7 @@
           document.getElementById("pad").classList.add("error");
           renderDots();
           if (result.jammed && result.blockedUntil) {
+            blockedUntilValue = result.blockedUntil;
             startCountdown(result.blockedUntil);
           } else {
             setMessage(`Falsche PIN, noch ${result.attemptsLeft} Versuch(e)`);

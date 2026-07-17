@@ -136,16 +136,19 @@ const init = async () => {
   };
 
   // Init global lock manager
+  const LOCK_JAM_MAX_WAIT = 8 * 60 * 60;
   WEBVIEW.lock = {
     locked: false,
     attempts: 0,
     blockedUntil: null,
+    jamCount: 0,
     pinHash: null,
     set: function (status) {
       this.locked = status === "LOCKED";
       if (!this.locked) {
         this.attempts = 0;
         this.blockedUntil = null;
+        this.jamCount = 0;
       }
       updateLockOverlay();
       if (typeof this.callback === "function") this.callback();
@@ -176,7 +179,9 @@ const init = async () => {
       this.attempts++;
       const jammed = this.attempts >= this.maxAttempts;
       if (jammed) {
-        this.blockedUntil = Date.now() + this.wait * 1000;
+        const wait = Math.min(this.wait * Math.pow(2, this.jamCount), LOCK_JAM_MAX_WAIT);
+        this.blockedUntil = Date.now() + wait * 1000;
+        this.jamCount++;
       }
       if (typeof this.callback === "function") this.callback();
       return {
@@ -192,6 +197,7 @@ const init = async () => {
       this.maxAttempts = attempts;
       this.wait = wait;
       this.locked = false;
+      this.jamCount = 0;
     },
   };
 
