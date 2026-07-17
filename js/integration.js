@@ -78,6 +78,8 @@ const init = async () => {
       initPageNumber();
       initPageZoom();
       initPageUrl();
+      initLock();
+      initLockPin();
 
       // Init client sensors
       initModel();
@@ -119,6 +121,7 @@ const init = async () => {
         updateDisplay();
         updateLastActive();
       });
+      EVENTS.on("updateLock", updateLock);
       EVENTS.on("updateScreenshot", updateScreenshot);
       EVENTS.on("consoleLog", updateErrors);
     })
@@ -819,6 +822,93 @@ const updatePageUrl = async () => {
   const currentUrl = WEBVIEW.views[WEBVIEW.viewActive || 1].webContents.getURL();
   const pageUrl = !currentUrl || currentUrl.startsWith("data:") ? defaultUrl : currentUrl;
   publishState("page_url", pageUrl.length < 255 ? pageUrl : null);
+};
+
+/**
+ * Initializes the lock and handles the execute logic.
+ *
+ * Locking/unlocking is fully controlled via MQTT (e.g. from a Home
+ * Assistant automation or dashboard button), bypassing the on-device
+ * pin. Unlocking is additionally possible locally via the pin pad
+ * overlay shown on the display while locked.
+ */
+const initLock = () => {
+  const root = `${INTEGRATION.root}/lock`;
+  const config = {
+    name: "Lock",
+    unique_id: `${INTEGRATION.node}_lock`,
+    command_topic: `${root}/set`,
+    state_topic: `${root}/state`,
+    icon: "mdi:lock",
+    device: INTEGRATION.device,
+  };
+  if (!ARGS.lock_pin || ARGS.app_disable.includes("mqtt_lock")) {
+    removeConfig("lock", config);
+    return;
+  }
+  publishConfig("lock", config)
+    .on("message", (topic, message) => {
+      if (topic === config.command_topic) {
+        const status = message.toString().toUpperCase();
+        if (["LOCK", "UNLOCK"].includes(status)) {
+          console.verbose("Set Lock Status:", status);
+          WEBVIEW.lock.set(status === "LOCK" ? "LOCKED" : "UNLOCKED");
+        }
+      }
+    })
+    .subscribe(config.command_topic);
+  updateLock();
+};
+
+/**
+ * Updates the lock status via the mqtt connection.
+ */
+const updateLock = async () => {
+  if (!ARGS.lock_pin || ARGS.app_disable.includes("mqtt_lock")) {
+    return;
+  }
+  publishState("lock", WEBVIEW.lock.get());
+};
+
+/**
+ * Initializes the lock pin change entity and handles the execute logic.
+ *
+ * This is intentionally write-only (no state is published back) and
+ * is not meant as a real security boundary, only to keep guests and
+ * children from fiddling with window/garage controls. Changing the
+ * pin is only possible from the Home Assistant side, never from the
+ * touchscreen itself.
+ */
+const initLockPin = () => {
+  const root = `${INTEGRATION.root}/lock/pin`;
+  const config = {
+    name: "Lock Pin",
+    unique_id: `${INTEGRATION.node}_lock_pin`,
+    command_topic: `${root}/set`,
+    mode: "password",
+    pattern: "^[0-9]{4,8}$",
+    icon: "mdi:dialpad",
+    device: INTEGRATION.device,
+  };
+  if (!ARGS.lock_pin || ARGS.app_disable.includes("mqtt_lock")) {
+    removeConfig("text", config);
+    return;
+  }
+  publishConfig("text", config)
+    .on("message", (topic, message) => {
+      if (topic === config.command_topic) {
+        const pin = message.toString();
+        if (/^\d{4,8}$/.test(pin)) {
+          console.verbose("Set Lock Pin");
+          const hash = hardware.hashPin(pin);
+          WEBVIEW.lock.setPin(hash);
+          hardware.updateStoredArg("lock_pin", hash);
+        } else {
+          console.warn("Set Lock Pin: Invalid pin format");
+        }
+      }
+    })
+    .subscribe(config.command_topic);
 };
 
 /**

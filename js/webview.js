@@ -135,6 +135,66 @@ const init = async () => {
     },
   };
 
+  // Init global lock manager
+  WEBVIEW.lock = {
+    locked: false,
+    attempts: 0,
+    blockedUntil: null,
+    pinHash: null,
+    set: function (status) {
+      this.locked = status === "LOCKED";
+      if (!this.locked) {
+        this.attempts = 0;
+        this.blockedUntil = null;
+      }
+      updateLockOverlay();
+      if (typeof this.callback === "function") this.callback();
+    },
+    get: function () {
+      if (this.blockedUntil && this.blockedUntil > Date.now()) {
+        return "JAMMED";
+      }
+      return this.locked ? "LOCKED" : "UNLOCKED";
+    },
+    setPin: function (pinHash) {
+      this.pinHash = pinHash;
+    },
+    verify: function (pin) {
+      const now = Date.now();
+      if (this.blockedUntil) {
+        if (this.blockedUntil > now) {
+          return { success: false, jammed: true, blockedUntil: this.blockedUntil };
+        }
+        this.blockedUntil = null;
+        this.attempts = 0;
+      }
+      const success = !!this.pinHash && hardware.hashPin(pin) === this.pinHash;
+      if (success) {
+        this.set("UNLOCKED");
+        return { success: true };
+      }
+      this.attempts++;
+      const jammed = this.attempts >= this.maxAttempts;
+      if (jammed) {
+        this.blockedUntil = Date.now() + this.wait * 1000;
+      }
+      if (typeof this.callback === "function") this.callback();
+      return {
+        success: false,
+        jammed: jammed,
+        attemptsLeft: Math.max(0, this.maxAttempts - this.attempts),
+        blockedUntil: this.blockedUntil,
+      };
+    },
+    init: function (pinHash, attempts, wait, callback) {
+      this.callback = callback;
+      this.pinHash = pinHash || null;
+      this.maxAttempts = attempts;
+      this.wait = wait;
+      this.locked = false;
+    },
+  };
+
   // Init root window
   WEBVIEW.window = new BaseWindow({
     title: APP.title,
@@ -212,17 +272,34 @@ const init = async () => {
   WEBVIEW.window.contentView.addChildView(WEBVIEW.navigation);
   WEBVIEW.navigation.webContents.loadFile(path.join(APP.path, "html", "navigation.html"));
 
+  // Init global lock overlay (stacked on top of everything else)
+  if (ARGS.lock_pin) {
+    WEBVIEW.lockView = new WebContentsView({
+      transparent: true,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+      },
+    });
+    WEBVIEW.lockView.setBackgroundColor("#00000000");
+    WEBVIEW.lockView.setVisible(false);
+    WEBVIEW.window.contentView.addChildView(WEBVIEW.lockView);
+    WEBVIEW.lockView.webContents.loadFile(path.join(APP.path, "html", "lock.html"));
+  }
+
   // Init global layout
   const { width, height, x, y } = WEBVIEW.window.getBounds();
   console.info(`Open Window: ${width}x${height}+${x}+${y}`);
   WEBVIEW.theme.init(theme, updateTheme);
   WEBVIEW.zoom.init(zoom, updateZoom);
+  WEBVIEW.lock.init(ARGS.lock_pin, parseInt(ARGS.lock_attempts, 10) || 3, parseInt(ARGS.lock_wait, 10) || 30, updateLock);
 
   // Register global events
   await windowEvents();
   await widgetEvents();
   await statusEvents();
   await navigationEvents();
+  await lockEvents();
   await viewEvents();
   await appEvents();
 
@@ -291,6 +368,33 @@ const updateZoom = () => {
     console.info("Update Page Zoom:", zoom);
   }
   EVENTS.emit("updatePage");
+};
+
+/**
+ * Updates the lock status.
+ */
+const updateLock = () => {
+  if (APP.exiting) {
+    return;
+  }
+  if (WEBVIEW.initialized) {
+    console.info("Update Lock Status:", WEBVIEW.lock.get());
+  }
+  EVENTS.emit("updateLock");
+};
+
+/**
+ * Shows or hides the lock overlay based on the current lock status.
+ */
+const updateLockOverlay = () => {
+  if (!WEBVIEW.lockView) {
+    return;
+  }
+  const locked = WEBVIEW.lock.locked;
+  WEBVIEW.lockView.setVisible(locked);
+  if (locked) {
+    WEBVIEW.lockView.webContents.send("lock-shown");
+  }
 };
 
 /**
@@ -465,7 +569,7 @@ const updateNavigation = () => {
  * @param {string} force - Force the navigation bar visibility to 'ON' or 'OFF'.
  */
 const toggleNavigation = (force = null) => {
-  if (!WEBVIEW.navigationEnabled) {
+  if (!WEBVIEW.navigationEnabled || WEBVIEW.lock.locked) {
     return;
   }
   const window = WEBVIEW.window.getBounds();
@@ -524,7 +628,7 @@ const toggleStatus = (force = null) => {
  * Decreases page zoom on the active webview.
  */
 const zoomMinus = () => {
-  if (!WEBVIEW.viewActive) {
+  if (!WEBVIEW.viewActive || WEBVIEW.lock.locked) {
     return;
   }
   WEBVIEW.zoom.minus();
@@ -535,7 +639,7 @@ const zoomMinus = () => {
  * Increases page zoom on the active webview.
  */
 const zoomPlus = () => {
-  if (!WEBVIEW.viewActive) {
+  if (!WEBVIEW.viewActive || WEBVIEW.lock.locked) {
     return;
   }
   WEBVIEW.zoom.plus();
@@ -546,7 +650,7 @@ const zoomPlus = () => {
  * Navigates backward in the history of the active webview.
  */
 const historyBackward = () => {
-  if (!WEBVIEW.viewActive) {
+  if (!WEBVIEW.viewActive || WEBVIEW.lock.locked) {
     return;
   }
   const view = WEBVIEW.views[WEBVIEW.viewActive];
@@ -559,7 +663,7 @@ const historyBackward = () => {
  * Navigates forward in the history of the active webview.
  */
 const historyForward = () => {
-  if (!WEBVIEW.viewActive) {
+  if (!WEBVIEW.viewActive || WEBVIEW.lock.locked) {
     return;
   }
   const view = WEBVIEW.views[WEBVIEW.viewActive];
@@ -572,7 +676,7 @@ const historyForward = () => {
  * Activates the previous webview page.
  */
 const previousView = () => {
-  if (!WEBVIEW.viewActive) {
+  if (!WEBVIEW.viewActive || WEBVIEW.lock.locked) {
     return;
   }
   if (WEBVIEW.viewActive > 1) {
@@ -585,7 +689,7 @@ const previousView = () => {
  * Activates the next webview page.
  */
 const nextView = () => {
-  if (!WEBVIEW.viewActive) {
+  if (!WEBVIEW.viewActive || WEBVIEW.lock.locked) {
     return;
   }
   if (WEBVIEW.viewActive < WEBVIEW.views.length - 1) {
@@ -598,7 +702,7 @@ const nextView = () => {
  * Reloads the default url and settings on the active webview.
  */
 const homeView = () => {
-  if (!WEBVIEW.viewActive) {
+  if (!WEBVIEW.viewActive || WEBVIEW.lock.locked) {
     return;
   }
   const view = WEBVIEW.views[WEBVIEW.viewActive];
@@ -626,7 +730,7 @@ const homeView = () => {
  * Reloads the current url on the active webview.
  */
 const reloadView = () => {
-  if (!WEBVIEW.viewActive) {
+  if (!WEBVIEW.viewActive || WEBVIEW.lock.locked) {
     return;
   }
   const view = WEBVIEW.views[WEBVIEW.viewActive];
@@ -715,6 +819,19 @@ const resizeView = () => {
     });
     WEBVIEW.navigation.webContents.send("data-theme", {
       theme: WEBVIEW.navigationTheme,
+    });
+  }
+
+  // Update lock overlay size (always covers the full window, on top of everything)
+  if (WEBVIEW.lockView) {
+    WEBVIEW.lockView.setBounds({
+      x: 0,
+      y: 0,
+      width: window.width,
+      height: window.height,
+    });
+    WEBVIEW.lockView.webContents.send("data-theme", {
+      theme: WEBVIEW.navigationTheme || WEBVIEW.statusTheme,
     });
   }
 
@@ -1040,6 +1157,24 @@ const navigationEvents = async () => {
         historyForward();
         break;
     }
+  });
+};
+
+/**
+ * Register lock events and handler.
+ */
+const lockEvents = async () => {
+  if (!WEBVIEW.lockView) {
+    return;
+  }
+  console.debug("webview.js: lockEvents()");
+
+  // Handle pin submit events
+  ipcMain.on("pin-submit", (e, data) => {
+    console.debug("webview.js: lockEvents(pin-submit)");
+    const pin = (data?.pin || "").toString();
+    const result = WEBVIEW.lock.verify(pin);
+    WEBVIEW.lockView.webContents.send("pin-result", result);
   });
 };
 

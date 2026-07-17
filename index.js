@@ -134,6 +134,9 @@ const initApp = async () => {
  */
 const initArgs = async () => {
   let args = parseArgs(process);
+  if (args.lock_pin) {
+    args.lock_pin = hardware.hashPin(args.lock_pin);
+  }
   let argsProvided = !!Object.keys(args).length;
 
   let argsFilePath = path.join(APP.config, "Arguments.json");
@@ -335,6 +338,26 @@ const promptArgs = async (proc) => {
       fallback: "homeassistant",
     },
     {
+      key: "lock",
+      question: "\nEnable Lock with PIN?",
+      fallback: "y/N",
+    },
+    {
+      key: "lock_pin",
+      question: "Enter Lock PIN (4-8 digits)",
+      fallback: "1234",
+    },
+    {
+      key: "lock_attempts",
+      question: "Enter Lock max attempts",
+      fallback: "3",
+    },
+    {
+      key: "lock_wait",
+      question: "Enter Lock wait time in seconds",
+      fallback: "30",
+    },
+    {
       key: "check",
       question: "\nEverything looks good?",
       fallback: "Y/n",
@@ -353,6 +376,21 @@ const promptArgs = async (proc) => {
         if (!["y", "yes"].includes(value)) {
           ignore = ignore.concat(["mqtt_url", "mqtt_user", "mqtt_password", "mqtt_discovery"]);
         }
+      } else if (key === "lock") {
+        const prompt = `${question} (${fallback}): `;
+        const answer = await read.question(prompt);
+        const value = (answer.trim() || fallback.match(/[YN]/)[0]).toLowerCase();
+        if (!["y", "yes"].includes(value)) {
+          ignore = ignore.concat(["lock_pin", "lock_attempts", "lock_wait"]);
+        }
+      } else if (key === "lock_pin" && !ignore.includes(key)) {
+        let value;
+        do {
+          const prompt = `${question} (${fallback}): `;
+          const answer = await read.question(prompt);
+          value = answer.trim() || fallback;
+        } while (!/^\d{4,8}$/.test(value));
+        args[key] = hardware.hashPin(value);
       } else if (key === "check") {
         const json = JSON.stringify(args, null, 2);
         const prompt = `${question}\n${json}\n(${fallback}): `;

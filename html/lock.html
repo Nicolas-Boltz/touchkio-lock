@@ -1,0 +1,319 @@
+<!doctype html>
+<html>
+  <head>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'unsafe-inline'" />
+    <style>
+      [data-theme="dark"] {
+        --primary-color: rgba(225, 225, 225, 1);
+        --secondary-color: rgba(225, 225, 225, 0.5);
+        --border-color: rgba(225, 225, 225, 0.15);
+        --background-color: rgba(28, 28, 28, 0.96);
+        --key-color: rgba(255, 255, 255, 0.08);
+        --key-active-color: rgba(255, 255, 255, 0.18);
+        --error-color: rgba(255, 69, 58, 1);
+        --dot-color: rgba(225, 225, 225, 0.25);
+        --dot-active-color: rgba(3, 169, 244, 1);
+      }
+      [data-theme="light"] {
+        --primary-color: rgba(33, 33, 33, 1);
+        --secondary-color: rgba(33, 33, 33, 0.5);
+        --border-color: rgba(33, 33, 33, 0.15);
+        --background-color: rgba(255, 255, 255, 0.96);
+        --key-color: rgba(0, 0, 0, 0.05);
+        --key-active-color: rgba(0, 0, 0, 0.12);
+        --error-color: rgba(255, 59, 48, 1);
+        --dot-color: rgba(33, 33, 33, 0.2);
+        --dot-active-color: rgba(3, 169, 244, 1);
+      }
+      [data-theme="hidden"] {
+        --primary-color: rgba(0, 0, 0, 0);
+        --secondary-color: rgba(0, 0, 0, 0);
+        --border-color: rgba(0, 0, 0, 0);
+        --background-color: rgba(0, 0, 0, 0);
+        --key-color: rgba(0, 0, 0, 0);
+        --key-active-color: rgba(0, 0, 0, 0);
+        --error-color: rgba(0, 0, 0, 0);
+        --dot-color: rgba(0, 0, 0, 0);
+        --dot-active-color: rgba(0, 0, 0, 0);
+      }
+      ::-webkit-scrollbar {
+        display: none;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        cursor: pointer;
+        user-select: none;
+        font-family: sans-serif;
+      }
+      html,
+      body {
+        width: 100vw;
+        height: 100vh;
+        background: transparent;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .pad {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        row-gap: 16px;
+        padding: 24px;
+        border-radius: 20px;
+        border: 1px solid var(--border-color);
+        background: var(--background-color);
+      }
+      .dots {
+        display: flex;
+        column-gap: 10px;
+        height: 14px;
+      }
+      .dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--dot-color);
+        transition: background-color 0.1s ease-in-out;
+      }
+      .dot.filled {
+        background: var(--dot-active-color);
+      }
+      .pad.error .dots {
+        animation: shake 0.4s ease-in-out;
+      }
+      .pad.error .dot {
+        background: var(--error-color);
+      }
+      .message {
+        min-height: 18px;
+        font-size: 13px;
+        text-align: center;
+        color: var(--secondary-color);
+      }
+      .pad.error .message {
+        color: var(--error-color);
+      }
+      .keys {
+        display: grid;
+        grid-template-columns: repeat(3, 56px);
+        grid-auto-rows: 56px;
+        gap: 10px;
+      }
+      button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 56px;
+        height: 56px;
+        border: none;
+        border-radius: 50%;
+        font-size: 20px;
+        color: var(--primary-color);
+        background: var(--key-color);
+      }
+      button:active {
+        background: var(--key-active-color);
+      }
+      button:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
+      button svg {
+        width: 22px;
+        height: 22px;
+        fill: var(--primary-color);
+        pointer-events: none;
+      }
+      button#confirm {
+        background: var(--dot-active-color);
+      }
+      button#confirm svg {
+        fill: white;
+      }
+      @keyframes shake {
+        0%,
+        100% {
+          transform: translateX(0);
+        }
+        20%,
+        60% {
+          transform: translateX(-8px);
+        }
+        40%,
+        80% {
+          transform: translateX(8px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="pad" id="pad">
+      <div class="dots" id="dots"></div>
+      <div class="message" id="message">&nbsp;</div>
+      <div class="keys">
+        <button data-digit="1">1</button>
+        <button data-digit="2">2</button>
+        <button data-digit="3">3</button>
+        <button data-digit="4">4</button>
+        <button data-digit="5">5</button>
+        <button data-digit="6">6</button>
+        <button data-digit="7">7</button>
+        <button data-digit="8">8</button>
+        <button data-digit="9">9</button>
+        <button id="clear">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path
+              d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"
+            />
+          </svg>
+        </button>
+        <button data-digit="0">0</button>
+        <button id="backspace">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path
+              d="M22,3H7C6.31,3 5.77,3.35 5.41,3.88L0,12L5.41,20.11C5.77,20.64 6.31,21 7,21H22A2,2 0 0,0 24,19V5A2,2 0 0,0 22,3M19,15.59L17.59,17L14,13.41L10.41,17L9,15.59L12.59,12L9,8.41L10.41,7L14,10.59L17.59,7L19,8.41L15.41,12L19,15.59Z"
+            />
+          </svg>
+        </button>
+      </div>
+      <button id="confirm" style="width: 100%; border-radius: 12px">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+          <path d="M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z" />
+        </svg>
+      </button>
+    </div>
+    <script>
+      const { ipcRenderer } = require("electron");
+
+      const MIN_LENGTH = 4;
+      const MAX_LENGTH = 8;
+
+      let pin = "";
+      let locked = false;
+      let countdownInterval = null;
+
+      const renderDots = () => {
+        const dots = document.getElementById("dots");
+        dots.innerHTML = "";
+        const count = Math.max(pin.length, MIN_LENGTH);
+        for (let i = 0; i < count; i++) {
+          const dot = document.createElement("div");
+          dot.className = "dot" + (i < pin.length ? " filled" : "");
+          dots.appendChild(dot);
+        }
+      };
+
+      const setMessage = (text) => {
+        document.getElementById("message").textContent = text || " ";
+      };
+
+      const setKeysDisabled = (disabled) => {
+        document.querySelectorAll("button").forEach((button) => {
+          button.disabled = disabled;
+        });
+      };
+
+      const resetPad = () => {
+        pin = "";
+        locked = false;
+        clearInterval(countdownInterval);
+        document.getElementById("pad").classList.remove("error");
+        setKeysDisabled(false);
+        setMessage("");
+        renderDots();
+      };
+
+      const submitPin = () => {
+        if (pin.length < MIN_LENGTH || locked) {
+          return;
+        }
+        setKeysDisabled(true);
+        ipcRenderer.send("pin-submit", { pin });
+      };
+
+      const startCountdown = (blockedUntil) => {
+        locked = true;
+        setKeysDisabled(true);
+        clearInterval(countdownInterval);
+        const tick = () => {
+          const remaining = Math.ceil((blockedUntil - Date.now()) / 1000);
+          if (remaining <= 0) {
+            clearInterval(countdownInterval);
+            locked = false;
+            pin = "";
+            renderDots();
+            document.getElementById("pad").classList.remove("error");
+            setKeysDisabled(false);
+            setMessage("");
+            return;
+          }
+          setMessage(`Erneut versuchen in ${remaining}s`);
+        };
+        tick();
+        countdownInterval = setInterval(tick, 1000);
+      };
+
+      const registerSendEvents = () => {
+        document.querySelectorAll("button[data-digit]").forEach((button) => {
+          button.addEventListener("click", () => {
+            if (locked || pin.length >= MAX_LENGTH) {
+              return;
+            }
+            document.getElementById("pad").classList.remove("error");
+            setMessage("");
+            pin += button.dataset.digit;
+            renderDots();
+          });
+        });
+        document.getElementById("backspace").addEventListener("click", () => {
+          if (locked) {
+            return;
+          }
+          pin = pin.slice(0, -1);
+          renderDots();
+        });
+        document.getElementById("clear").addEventListener("click", () => {
+          if (locked) {
+            return;
+          }
+          pin = "";
+          renderDots();
+        });
+        document.getElementById("confirm").addEventListener("click", submitPin);
+      };
+
+      const registerReceiveEvents = () => {
+        ipcRenderer.on("data-theme", (e, data) => {
+          document.documentElement.setAttribute("data-theme", data.theme);
+        });
+        ipcRenderer.on("lock-shown", () => {
+          resetPad();
+        });
+        ipcRenderer.on("pin-result", (e, result) => {
+          if (result.success) {
+            resetPad();
+            return;
+          }
+          pin = "";
+          setKeysDisabled(false);
+          document.getElementById("pad").classList.add("error");
+          renderDots();
+          if (result.jammed && result.blockedUntil) {
+            startCountdown(result.blockedUntil);
+          } else {
+            setMessage(`Falsche PIN, noch ${result.attemptsLeft} Versuch(e)`);
+          }
+        });
+      };
+
+      renderDots();
+      registerSendEvents();
+      registerReceiveEvents();
+    </script>
+  </body>
+</html>

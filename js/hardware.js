@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const fsp = require("fs/promises");
 const cpr = require("child_process");
+const crypto = require("crypto");
 
 global.HARDWARE = global.HARDWARE || {
   initialized: false,
@@ -391,6 +392,45 @@ const getMachineId = () => {
     }
   }
   return "123456";
+};
+
+/**
+ * Hashes a pin code using a device-specific salt.
+ *
+ * The pin is never stored or transmitted in plain text, only this
+ * one-way hash is kept, since the pin only ever needs to be verified.
+ *
+ * @param {string} pin - The plain text pin code.
+ * @returns {string} The hashed pin code as a hex string.
+ */
+const hashPin = (pin) => {
+  return crypto.scryptSync(pin, getMachineId(), 32).toString("hex");
+};
+
+/**
+ * Updates a single value in the persisted `Arguments.json` file.
+ *
+ * This allows individual arguments to be changed at runtime (e.g. via
+ * MQTT) without going through the full setup/prompt flow again.
+ *
+ * @param {string} key - The argument key to update.
+ * @param {string} value - The new value for the argument.
+ */
+const updateStoredArg = (key, value) => {
+  const file = path.join(APP.config, "Arguments.json");
+  try {
+    if (!fs.existsSync(file)) {
+      return;
+    }
+    const args = JSON.parse(fs.readFileSync(file, "utf8"));
+    args[key] = value;
+    fs.writeFileSync(file, JSON.stringify(args, null, 2));
+    if (typeof ARGS === "object") {
+      ARGS[key] = value;
+    }
+  } catch (error) {
+    console.error(`Failed to update ${file}:`, error.message);
+  }
 };
 
 /**
@@ -1409,6 +1449,8 @@ module.exports = {
   getVendor,
   getSerialNumber,
   getMachineId,
+  hashPin,
+  updateStoredArg,
   getNetworkAddresses,
   getHostName,
   getUpTime,

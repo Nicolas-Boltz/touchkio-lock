@@ -158,6 +158,24 @@ For example:
 touchkio --web-url=http://192.168.1.42:8123 --mqtt-url=mqtt://192.168.1.42:1883 --mqtt-user=kiosk --mqtt-password=password
 ```
 
+### LOCK
+If you want to prevent guests or children from fiddling with window/garage controls on the touchscreen, you can enable a pin-protected lock overlay. This requires the [MQTT](#mqtt) arguments above to be configured, since locking and unlocking is controlled exclusively via MQTT/Home Assistant (e.g. an automation or a button on your dashboard) - there is no lock button on the device itself.
+
+| Name                         | Default | Description                                                                |
+| ---------------------------- | ------- | -------------------------------------------------------------------------- |
+| `--lock-pin` (Optional)      | -       | Enables the lock overlay and sets the pin used to unlock it (4-8 digits)   |
+| `--lock-attempts` (Optional) | `3`     | Number of wrong pin attempts allowed before the pad is temporarily blocked |
+| `--lock-wait` (Optional)     | `30`    | Number of seconds the pad stays blocked after too many wrong attempts      |
+
+Once enabled, a `Lock` entity shows up in Home Assistant that can be used to lock/unlock the kiosk from an automation or dashboard button - this unlock path intentionally bypasses the pin. While locked, the dashboard (including the doorbell camera image, etc.) stays fully visible, but all touch input, keyboard shortcuts, and the widget/navigation/status controls are blocked except for the on-screen pin pad. A separate write-only `Lock Pin` entity lets you change the pin from Home Assistant at any time; the pin is never shown on the device.
+
+This is a **convenience/child-lock feature, not a security boundary** against a determined attacker - the pin is stored as a salted hash, but locking/unlocking state itself is not persisted across restarts.
+
+For example:
+```bash
+touchkio --web-url=http://192.168.1.42:8123 --mqtt-url=mqtt://192.168.1.42:1883 --mqtt-user=kiosk --mqtt-password=password --lock-pin=1234
+```
+
 ## User Interface
 TouchKio provides a simple webview window designed specifically for Touch Displays. Electron apps are known to be resource intensive due to their architecture and the inclusion of a full web browser environment. If you just run the kiosk application without other heavy loads, everything should run smoothly.
 
